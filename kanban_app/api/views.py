@@ -1,6 +1,9 @@
-from rest_framework import viewsets
+from rest_framework import viewsets, permissions
 from kanban_app.models import Board, Task, Comment
-from .serializers import BoardSerializer, TaskSerializer, CommentSerializer
+from django.contrib.auth.models import User
+from .serializers import BoardSerializer, TaskSerializer, CommentSerializer, RegisterSerializer
+
+
 
 
 class BoardViewSet(viewsets.ModelViewSet):
@@ -16,3 +19,10 @@ class TaskViewSet(viewsets.ModelViewSet):
 class CommentViewSet(viewsets.ModelViewSet):
     queryset = Comment.objects.all()
     serializer_class = CommentSerializer
+    
+    
+class RegisterViewSet(viewsets.ModelViewSet):
+    queryset = User.objects.all()
+    serializer_class = RegisterSerializer
+    permission_classes = [permissions.AllowAny]
+    http_method_names = ['post']
