@@ -2,6 +2,8 @@ from rest_framework import serializers
 from kanban_app.models import Board, Task, Comment
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth import authenticate
+from rest_framework.exceptions import AuthenticationFailed
 
 
 class BoardSerializer(serializers.ModelSerializer):
@@ -64,3 +66,28 @@ class RegisterSerializer(serializers.ModelSerializer):
             'email': instance.email,
             'user_id': instance.id,
         }
+
+
+class LoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only = True)
+    
+    def validate(self, data):
+        email = data.get('email')
+        password = data.get('password')
+        
+        if email and password:
+            try:
+                user = User.objects.get(email=email)
+            except User.DoesNotExist:
+                raise serializers.ValidationError('Invalid credentials')
+            
+            user = authenticate(username=user.username, password=password)
+            if user is None:
+                raise serializers.ValidationError('Invalid credentials')
+            
+        else:
+            raise serializers.ValidationError('Must include email and password.')
+        
+        data['user']= user
+        return data
