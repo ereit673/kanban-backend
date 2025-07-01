@@ -10,6 +10,8 @@ from .serializers import BoardCreateSerializer, BoardListSerializer, BoardDetail
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.permissions import IsAuthenticated
+
 
 from django.contrib.auth import authenticate
 from .serializers import LoginSerializer
@@ -106,3 +108,35 @@ class LoginAPIView(APIView):
             'email': user.email,
             'user_id': user.id
         }, status=status.HTTP_200_OK)
+
+
+class EmailCheckAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        email = request.query_params.get('email')
+
+        if not email:
+            return Response(
+                {"detail": "Ungültige Anfrage. Die E-Mail-Adresse fehlt oder hat ein falsches Format."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(email=email)
+            data = {
+                "id": user.id,
+                "email": user.email,
+                "fullname": user.get_full_name() or user.username
+            }
+            return Response(data, status=status.HTTP_200_OK)
+        except User.DoesNotExist:
+            return Response(
+                {"detail": "Email nicht gefunden. Die Email existiert nicht."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception:
+            return Response(
+                {"detail": "Interner Serverfehler."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

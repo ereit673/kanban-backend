@@ -6,6 +6,7 @@ from rest_framework.routers import DefaultRouter
 
 urlpatterns = [
     path('login/', views.LoginAPIView.as_view(), name='login'),
+    path('email-check/', views.EmailCheckAPIView.as_view(), name='email-check')
 ]
 
 router = DefaultRouter()
