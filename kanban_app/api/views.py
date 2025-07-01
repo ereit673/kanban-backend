@@ -1,8 +1,10 @@
+from django.db.models import Count, Q
+
 from rest_framework import viewsets, permissions, status
 from rest_framework.views import APIView
 from kanban_app.models import Board, Task, Comment
 from django.contrib.auth.models import User
-from .serializers import BoardSerializer, TaskSerializer, CommentSerializer, RegisterSerializer
+from .serializers import BoardCreateSerializer, BoardListSerializer, BoardDetailSerializer, BoardUpdateSerializer, TaskSerializer, CommentSerializer, RegisterSerializer
 
 
 from rest_framework.response import Response
@@ -14,34 +16,87 @@ from .serializers import LoginSerializer
 
 
 class BoardViewSet(viewsets.ModelViewSet):
-    queryset = Board.objects.all()
-    serializer_class = BoardSerializer
-    
-    
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return BoardDetailSerializer
+        elif self.action == 'list':
+            return BoardListSerializer
+        elif self.action == 'create':
+            return BoardCreateSerializer
+        elif self.action in ['update', 'partial_update']:
+            return BoardUpdateSerializer
+        return BoardListSerializer  # fallback
+
+    def get_queryset(self):
+        user = self.request.user
+        return (
+            Board.objects.filter(Q(owner=user) | Q(users=user)).distinct().annotate(
+                member_count=Count('users', distinct=True),
+                ticket_count=Count('tasks', distinct=True),
+                tasks_to_do_count=Count('tasks', filter=Q(
+                    tasks__status='To-Do'), distinct=True),
+                tasks_high_prio_count=Count('tasks', filter=Q(
+                    tasks__priority='High'), distinct=True)
+            )
+        )
+
+    def perform_create(self, serializer):
+        board = serializer.save(owner=self.request.user)
+        board.users.add(self.request.user)
+
+    def update(self, request, *args, **kwargs):
+        board = self.get_object()
+        user = request.user
+
+        # Permissions: must be owner or member
+        if user != board.owner and user not in board.users.all():
+            raise PermissionDenied(
+                "You must be the owner or a member of the board.")
+
+        serializer = self.get_serializer(
+            board, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        updated_board = serializer.save()
+
+        return Response(BoardUpdateSerializer(updated_board).data, status=status.HTTP_200_OK)
+
+    def destroy(self, request, *args, **kwargs):
+        board = self.get_object()
+        if board.owner != request.user:
+            raise PermissionDenied("Nur der Eigentümer darf dieses Board löschen.")
+        board.delete()
+        return Response(
+            {"detail": "Board wurde erfolgreich gelöscht."},
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+
 class TaskViewSet(viewsets.ModelViewSet):
     queryset = Task.objects.all()
     serializer_class = TaskSerializer
-    
-    
+
+
 class CommentViewSet(viewsets.ModelViewSet):
     queryset = Comment.objects.all()
     serializer_class = CommentSerializer
-    
-    
+
+
 class RegisterViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
     http_method_names = ['post']
-    
-    
+
+
 class LoginAPIView(APIView):
     permission_classes = []
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         user = serializer.validated_data['user']
         refresh = RefreshToken.for_user(user)
 
