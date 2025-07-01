@@ -1,9 +1,10 @@
+from django.forms import ValidationError
 from rest_framework import serializers
 from kanban_app.models import Board, Task, Comment
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
-from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 
 
 class BoardCreateSerializer(serializers.ModelSerializer):
@@ -227,3 +228,103 @@ class BoardUpdateSerializer(serializers.ModelSerializer):
                 for user in instance.users.all()
             ]
         }
+        
+        
+class TaskCreateSerializer(serializers.ModelSerializer):
+    assignee_id = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(), required=False, source='assignee'
+    )
+    reviewer_id = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(), required=False, source='reviewer'
+    )
+
+    class Meta:
+        model = Task
+        fields = [
+            'board',
+            'title',
+            'description',
+            'status',
+            'priority',
+            'assignee_id',
+            'reviewer_id',
+            'due_date'
+        ]
+
+    def validate(self, data):
+        user = self.context['request'].user
+        board = data.get('board')
+        assignee = data.get('assignee')
+        reviewer = data.get('reviewer')
+
+        if not board:
+            raise ValidationError("Board must be provided.")
+
+        if not board.users.filter(id=user.id).exists():
+            raise ValidationError("Der Benutzer muss Mitglied des Boards sein.", code='forbidden')
+
+        if assignee and not board.users.filter(id=assignee.id).exists():
+            raise ValidationError("Assignee muss Mitglied des Boards sein.", code='forbidden')
+
+        if reviewer and not board.users.filter(id=reviewer.id).exists():
+            raise ValidationError("Reviewer muss Mitglied des Boards sein.", code='forbidden')
+
+        return data
+
+    def create(self, validated_data):
+        return Task.objects.create(**validated_data)
+    
+    
+class TaskUpdateSerializer(serializers.ModelSerializer):
+    assignee_id = serializers.IntegerField(required=False, allow_null=True)
+    reviewer_id = serializers.IntegerField(required=False, allow_null=True)
+
+    class Meta:
+        model = Task
+        fields = [
+            "title",
+            "description",
+            "status",
+            "priority",
+            "assignee_id",
+            "reviewer_id",
+            "due_date"
+        ]
+
+    def validate(self, attrs):
+        task = self.instance
+        board = task.board
+        user = self.context["request"].user
+
+        # Ensure the user is a board member
+        if user not in board.users.all():
+            raise PermissionDenied("Du bist kein Mitglied des Boards.")
+
+        # Validate assignee/reviewer if present
+        for field in ["assignee_id", "reviewer_id"]:
+            if field in attrs and attrs[field] is not None:
+                try:
+                    member = User.objects.get(id=attrs[field])
+                except User.DoesNotExist:
+                    raise serializers.ValidationError({field: "Benutzer existiert nicht."})
+                if member not in board.users.all():
+                    raise serializers.ValidationError({field: "Benutzer ist kein Mitglied des Boards."})
+
+        return attrs
+
+    def update(self, instance, validated_data):
+        # Handle assignee and reviewer separately
+        assignee_id = validated_data.pop("assignee_id", None)
+        reviewer_id = validated_data.pop("reviewer_id", None)
+
+        if assignee_id is not None:
+            instance.assignee_id = assignee_id
+        if reviewer_id is not None:
+            instance.reviewer_id = reviewer_id
+
+        # Update other fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        instance.save()
+        return instance

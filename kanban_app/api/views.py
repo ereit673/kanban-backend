@@ -4,13 +4,14 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.views import APIView
 from kanban_app.models import Board, Task, Comment
 from django.contrib.auth.models import User
-from .serializers import BoardCreateSerializer, BoardListSerializer, BoardDetailSerializer, BoardUpdateSerializer, TaskSerializer, CommentSerializer, RegisterSerializer
+from .serializers import BoardCreateSerializer, BoardListSerializer, BoardDetailSerializer, BoardUpdateSerializer, TaskSerializer, TaskDetailSerializer, TaskCreateSerializer, TaskUpdateSerializer, CommentSerializer, RegisterSerializer
 
 
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.exceptions import NotAuthenticated
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import action
 
 
 from django.contrib.auth import authenticate
@@ -67,7 +68,8 @@ class BoardViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         board = self.get_object()
         if board.owner != request.user:
-            raise PermissionDenied("Nur der Eigentümer darf dieses Board löschen.")
+            raise PermissionDenied(
+                "Nur der Eigentümer darf dieses Board löschen.")
         board.delete()
         return Response(
             {"detail": "Board wurde erfolgreich gelöscht."},
@@ -78,6 +80,54 @@ class BoardViewSet(viewsets.ModelViewSet):
 class TaskViewSet(viewsets.ModelViewSet):
     queryset = Task.objects.all()
     serializer_class = TaskSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return TaskCreateSerializer
+        elif self.action in ['assigned_to_me', 'reviewing']:
+            return TaskDetailSerializer
+        elif self.action == 'partial_update':
+            return TaskUpdateSerializer
+        return TaskSerializer
+
+    @action(detail=False, methods=['get'], url_path='assigned-to-me')
+    def assigned_to_me(self, request):
+        user = request.user
+
+        if not user or not user.is_authenticated:
+            raise NotAuthenticated(
+                "Nicht autorisiert. Der Benutzer muss eingeloggt sein.")
+
+        try:
+            tasks = Task.objects.filter(
+                assignee=user).prefetch_related('comments')
+            serializer = self.get_serializer(tasks, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception:
+            return Response(
+                {"detail": "Interner Serverfehler."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'], url_path='reviewing')
+    def reviewing(self, request):
+        user = request.user
+
+        if not user or not user.is_authenticated:
+            raise NotAuthenticated(
+                "Nicht autorisiert. Der Benutzer muss eingeloggt sein.")
+
+        try:
+            tasks = Task.objects.filter(
+                reviewer=user).prefetch_related('comments')
+            serializer = self.get_serializer(tasks, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception:
+            return Response(
+                {"detail": "Interner Serverfehler."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class CommentViewSet(viewsets.ModelViewSet):
