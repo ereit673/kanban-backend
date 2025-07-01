@@ -73,9 +73,14 @@ class TaskSerializer(serializers.ModelSerializer):
 
 
 class CommentSerializer(serializers.ModelSerializer):
+    author = serializers.SerializerMethodField()
+
     class Meta:
         model = Comment
-        fields = '__all__'
+        fields = ['id', 'created_at', 'author', 'content']
+
+    def get_author(self, obj):
+        return f"{obj.author.first_name} {obj.author.last_name}".strip()
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -296,11 +301,9 @@ class TaskUpdateSerializer(serializers.ModelSerializer):
         board = task.board
         user = self.context["request"].user
 
-        # Ensure the user is a board member
         if user not in board.users.all():
             raise PermissionDenied("Du bist kein Mitglied des Boards.")
 
-        # Validate assignee/reviewer if present
         for field in ["assignee_id", "reviewer_id"]:
             if field in attrs and attrs[field] is not None:
                 try:
@@ -313,7 +316,6 @@ class TaskUpdateSerializer(serializers.ModelSerializer):
         return attrs
 
     def update(self, instance, validated_data):
-        # Handle assignee and reviewer separately
         assignee_id = validated_data.pop("assignee_id", None)
         reviewer_id = validated_data.pop("reviewer_id", None)
 
@@ -322,7 +324,6 @@ class TaskUpdateSerializer(serializers.ModelSerializer):
         if reviewer_id is not None:
             instance.reviewer_id = reviewer_id
 
-        # Update other fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 

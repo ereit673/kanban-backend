@@ -9,7 +9,7 @@ from .serializers import BoardCreateSerializer, BoardListSerializer, BoardDetail
 
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.exceptions import NotAuthenticated
+from rest_framework.exceptions import NotAuthenticated, NotFound, PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 
@@ -91,6 +91,23 @@ class TaskViewSet(viewsets.ModelViewSet):
             return TaskUpdateSerializer
         return TaskSerializer
 
+    def destroy(self, request, *args, **kwargs):
+        task = self.get_object()
+        user = request.user
+
+        if not (task.assignee == user or task.board.owner == user):
+            raise PermissionDenied(
+                "Verboten. Nur der Ersteller der Task oder der Board-Eigentümer kann die Task löschen.")
+
+        try:
+            self.perform_destroy(task)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Exception:
+            return Response(
+                {"detail": "Interner Serverfehler."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     @action(detail=False, methods=['get'], url_path='assigned-to-me')
     def assigned_to_me(self, request):
         user = request.user
@@ -128,11 +145,61 @@ class TaskViewSet(viewsets.ModelViewSet):
                 {"detail": "Interner Serverfehler."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+            
 
 class CommentViewSet(viewsets.ModelViewSet):
-    queryset = Comment.objects.all()
     serializer_class = CommentSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        task_id = self.kwargs.get('task_pk')
+        try:
+            task = Task.objects.get(pk=task_id)
+        except Task.DoesNotExist:
+            raise NotFound("Task nicht gefunden.")
+
+        user = self.request.user
+        if not task.board.users.filter(id=user.id).exists() and task.board.owner != user:
+            raise PermissionDenied("Verboten. Der Benutzer muss Mitglied des Boards sein.")
+
+        return Comment.objects.filter(task=task).order_by('created_at')
+
+    def perform_create(self, serializer):
+        task_id = self.kwargs.get('task_pk')
+        try:
+            task = Task.objects.get(pk=task_id)
+        except Task.DoesNotExist:
+            raise NotFound("Task nicht gefunden.")
+
+        user = self.request.user
+        if not task.board.users.filter(id=user.id).exists() and task.board.owner != user:
+            raise PermissionDenied("Verboten. Der Benutzer muss Mitglied des Boards sein.")
+
+        serializer.save(task=task, author=user)
+        
+    def destroy(self, request, *args, **kwargs):
+        user = request.user
+        task_id = self.kwargs.get('task_pk')
+        comment_id = self.kwargs.get('pk')
+
+        try:
+            task = Task.objects.get(pk=task_id)
+        except Task.DoesNotExist:
+            return Response({"detail": "Task nicht gefunden."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            comment = Comment.objects.get(pk=comment_id, task=task)
+        except Comment.DoesNotExist:
+            return Response({"detail": "Kommentar nicht gefunden."}, status=status.HTTP_404_NOT_FOUND)
+
+        if comment.author != user:
+            return Response({"detail": "Verboten. Nur der Ersteller des Kommentars darf ihn löschen."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            comment.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Exception:
+            return Response({"detail": "Interner Serverfehler."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class RegisterViewSet(viewsets.ModelViewSet):
